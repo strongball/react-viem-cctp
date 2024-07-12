@@ -6,10 +6,10 @@ import {
   custom,
   CustomTransport,
   decodeAbiParameters,
+  encodeAbiParameters,
   formatUnits,
   getContract,
   GetContractReturnType,
-  hexToBytes,
   http,
   HttpTransport,
   keccak256,
@@ -20,16 +20,17 @@ import {
 } from "viem";
 import { usdcAbi } from "./contracts/usdc";
 import { tokenMessagerAbi } from "./contracts/tokenMessager";
-import { TestNetDomain } from "./types";
 import { messageTransmitterAbi } from "./contracts/messageTransmitter";
 
 interface USDCServiceConstructor {
   chain: Chain;
+  domain: number;
   tokenAddress: Address;
   tokenMessengerAddress: Address;
   messageTransmitterAddress: Address;
 }
 export class USDCService {
+  domain: number;
   client: PublicClient<
     HttpTransport,
     Chain,
@@ -63,6 +64,7 @@ export class USDCService {
   >;
   constructor({
     chain,
+    domain,
     tokenAddress,
     tokenMessengerAddress,
     messageTransmitterAddress,
@@ -78,6 +80,7 @@ export class USDCService {
     this.tokenAddress = tokenAddress;
     this.tokenMessengerAddress = tokenMessengerAddress;
     this.messageTransmitterAddress = messageTransmitterAddress;
+    this.domain = domain;
 
     this.usdcContract = getContract({
       address: tokenAddress,
@@ -139,17 +142,22 @@ export class USDCService {
   }
   async depositForBurn(
     units: bigint,
-    targetDomain: TestNetDomain,
+    targetDomain: number,
     targetAddress: Address,
   ) {
     await this.switchChain();
+
+    const o = AbiCoder.defaultAbiCoder().encode(
+      ["address"],
+      [targetAddress],
+    ) as Address;
+    const destinationAddressInBytes32 = encodeAbiParameters(
+      [{ type: "address" }],
+      [targetAddress],
+    );
+    console.log({ destinationAddressInBytes32, o });
     const res = await this.tokenMessengerContract.write.depositForBurn(
-      [
-        units,
-        targetDomain,
-        toHex(hexToBytes(targetAddress, { size: 32 })),
-        this.tokenAddress,
-      ],
+      [units, targetDomain, destinationAddressInBytes32, this.tokenAddress],
       { account: (await this.walletClient.getAddresses())[0] },
     );
     const receipt = await this.client.waitForTransactionReceipt({ hash: res });
