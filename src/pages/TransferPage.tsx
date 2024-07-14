@@ -17,7 +17,7 @@ import { getUSDCService } from "../servieMap";
 import { useBalance } from "../hooks/useBalance";
 
 interface Props {}
-const TransferPage: React.FC<Props> = (props) => {
+const TransferPage: React.FC<Props> = () => {
   const [walletAddress, setWalletAddress] = useState<Address>();
   const [connectWalletLoading, setConnectWalletLoading] = useState(false);
   const [sourceChain, setSourceChain] = useState<AvaliableChain>();
