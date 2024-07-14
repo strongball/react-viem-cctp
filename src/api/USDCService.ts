@@ -43,9 +43,6 @@ export class USDCService {
     ParseAccount<undefined>,
     undefined
   >;
-  tokenAddress: Address;
-  tokenMessengerAddress: Address;
-  messageTransmitterAddress: Address;
 
   usdcContract: GetContractReturnType<
     typeof usdcAbi,
@@ -77,9 +74,6 @@ export class USDCService {
       chain: chain,
       transport: custom(window.ethereum!),
     });
-    this.tokenAddress = tokenAddress;
-    this.tokenMessengerAddress = tokenMessengerAddress;
-    this.messageTransmitterAddress = messageTransmitterAddress;
     this.domain = domain;
 
     this.usdcContract = getContract({
@@ -108,7 +102,7 @@ export class USDCService {
       type: "ERC20",
       options: {
         symbol: symbol,
-        address: this.tokenAddress,
+        address: this.usdcContract.address,
         decimals: decimals,
       },
     });
@@ -131,33 +125,39 @@ export class USDCService {
     ]);
     return formatUnits(units, decimals);
   }
+
+  async currencyToUnit(currency: string): Promise<bigint> {
+    const decimals = await this.getDecimals();
+    return BigInt(Number(currency) * 10 ** decimals);
+  }
+
   async approve(units: bigint) {
     await this.switchChain();
     const res = await this.usdcContract.write.approve(
-      [this.tokenMessengerAddress, units],
+      [this.tokenMessengerContract.address, units],
       { account: (await this.walletClient.getAddresses())[0] },
     );
     await this.client.waitForTransactionReceipt({ hash: res });
     return res;
   }
+
   async depositForBurn(
     units: bigint,
     targetDomain: number,
     targetAddress: Address,
   ) {
     await this.switchChain();
-
-    const o = AbiCoder.defaultAbiCoder().encode(
-      ["address"],
-      [targetAddress],
-    ) as Address;
     const destinationAddressInBytes32 = encodeAbiParameters(
       [{ type: "address" }],
       [targetAddress],
     );
-    console.log({ destinationAddressInBytes32, o });
     const res = await this.tokenMessengerContract.write.depositForBurn(
-      [units, targetDomain, destinationAddressInBytes32, this.tokenAddress],
+      [
+        units,
+        targetDomain,
+        destinationAddressInBytes32,
+        this.usdcContract.address,
+      ],
       { account: (await this.walletClient.getAddresses())[0] },
     );
     const receipt = await this.client.waitForTransactionReceipt({ hash: res });

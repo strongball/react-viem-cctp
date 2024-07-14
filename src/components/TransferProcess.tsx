@@ -1,87 +1,222 @@
-import React, { useState } from "react";
-import { Box, Button, Paper } from "@mui/material";
-
-import { AvaliableChain } from "../types";
-import { getUSDCService } from "../servieMap";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Paper,
+  Step,
+  StepLabel,
+  Stepper,
+  Typography,
+} from "@mui/material";
 import { Address } from "viem";
-import { AttestationsResponse, fetchAttestations } from "../api/circle";
-import { sleep } from "../utils";
 
+import { waitForAttestations } from "../api/circle";
+import { USDCService } from "../api/USDCService";
+
+enum ProcessState {
+  Penging,
+  WaitApprove,
+  WaitBurn,
+  WaitReceive,
+  Finish,
+}
+
+const ProcessSteps: { value: ProcessState; label: string }[] = [
+  { label: "Approve", value: ProcessState.WaitApprove },
+  { label: "Burn", value: ProcessState.WaitBurn },
+  { label: "Receive", value: ProcessState.WaitReceive },
+  { label: "Finish", value: ProcessState.Finish },
+];
 interface Props {
-  source?: AvaliableChain;
-  target?: AvaliableChain;
-  unit?: string;
+  disabled?: boolean;
+  walletAddress?: Address;
+  sourceService?: USDCService;
+  targetService?: USDCService;
+  transferAmount?: string;
+  onFinish?: () => void;
 }
 const TransferProcess: React.FC<Props> = (props) => {
-  const { source, target, unit } = props;
-  const [stateLogs, setStateLogs] = useState<string[]>([]);
+  const {
+    disabled = false,
+    walletAddress,
+    sourceService,
+    targetService,
+    transferAmount,
+    onFinish,
+  } = props;
+  const [processState, setProcessState] = useState(ProcessState.Penging);
+  const [error, setError] = useState<any>();
+  const currentStep = useMemo(
+    () => ProcessSteps.findIndex((item) => item.value == processState),
+    [processState],
+  );
+
+  const [loading, setLoading] = useState(false);
   const [storeMessageBytes, setStoreMessageBytes] = useState<Address>();
 
-  const sourceService = getUSDCService(source);
-  const targetService = getUSDCService(target);
-  const unitBigInt = unit ? BigInt(unit) : undefined;
-
+  const [stateLogs, setStateLogs] = useState<string[]>([]);
   const addLog = (log: string) => {
-    setStateLogs((oldValue) => [...oldValue, log]);
+    setStateLogs((oldValue) => [
+      ...oldValue,
+      `[${new Date().toISOString()}] ${log}`,
+    ]);
   };
+
+  const handleStart = () => {
+    setProcessState(ProcessState.WaitApprove);
+  };
+  const handleRetry = () => {
+    setError(undefined);
+    invokeAction();
+  };
+  const invokeAction = () => {
+    switch (processState) {
+      case ProcessState.WaitApprove:
+        handleApprove();
+        break;
+      case ProcessState.WaitBurn:
+        handleDepositForBurn();
+        break;
+      case ProcessState.WaitReceive:
+        if (storeMessageBytes) {
+          handleReceive(storeMessageBytes);
+        } else {
+          setProcessState(ProcessState.WaitBurn);
+        }
+        break;
+    }
+  };
+  useEffect(() => {
+    invokeAction();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processState]);
+
   const handleApprove = async () => {
-    if (!sourceService || !targetService || !unitBigInt) {
+    if (!sourceService || !targetService || !transferAmount) {
       return;
     }
+    const units = await sourceService.currencyToUnit(transferAmount);
+    setLoading(true);
     addLog("Waiting approve...");
-    const hash = await sourceService.approve(unitBigInt);
-    addLog(`Approve done. ${hash}`);
-
-    handleDepositForBurn();
+    try {
+      const hash = await sourceService.approve(units);
+      addLog(`Approve done. ${hash}`);
+      setProcessState(ProcessState.WaitBurn);
+    } catch (error) {
+      setError(error);
+      addLog(`Approve fail. ${error}`);
+    }
+    setLoading(false);
   };
   const handleDepositForBurn = async () => {
-    if (!sourceService || !targetService || !unitBigInt) {
+    if (!sourceService || !targetService || !transferAmount) {
       return;
     }
-    const targetAddress = (await targetService.walletClient.getAddresses())[0];
+    const units = await sourceService.currencyToUnit(transferAmount);
+    setLoading(true);
     addLog("Waiting depositForBurn...");
-    addLog(`Target: ${targetAddress}`);
-    const messageBytes = await sourceService.depositForBurn(
-      unitBigInt,
-      targetService.domain,
-      targetAddress,
-    );
-    setStoreMessageBytes(messageBytes);
-    addLog(`DepositForBurn done. ${messageBytes}`);
-    handleReceive(messageBytes);
+    try {
+      const targetAddress = (
+        await targetService.walletClient.getAddresses()
+      )[0];
+      addLog(`Target: ${targetAddress}`);
+      const messageBytes = await sourceService.depositForBurn(
+        units,
+        targetService.domain,
+        targetAddress,
+      );
+      setStoreMessageBytes(messageBytes);
+      addLog(`DepositForBurn done. ${messageBytes}`);
+      setProcessState(ProcessState.WaitReceive);
+    } catch (error) {
+      setError(error);
+      addLog(`DepositForBurn fail. ${error}`);
+    }
+    setLoading(false);
   };
 
   const handleReceive = async (messageBytes: Address) => {
-    let attestationsResponse: AttestationsResponse | undefined;
+    setLoading(true);
+
     addLog("Waiting attestations...");
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      attestationsResponse = await fetchAttestations(messageBytes);
-      if (attestationsResponse?.status === "complete") {
-        break;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      const attestationsResponse = await waitForAttestations(messageBytes);
+      addLog(`Get attestations. ${attestationsResponse.attestation}`);
+      addLog("Waiting receiveMessage...");
+      try {
+        await targetService!.receiveMessage(
+          messageBytes,
+          attestationsResponse.attestation,
+        );
+        addLog("ReceiveMessage done");
+        setProcessState(ProcessState.Finish);
+        onFinish?.();
+      } catch (error) {
+        setError(error);
+        addLog(`DepositForBurn fail. ${error}`);
       }
-      await sleep(2000);
+    } catch (error) {
+      setError(error);
+      addLog(`DepositForBurn fail. ${error}`);
     }
-    addLog(`Get attestations. ${attestationsResponse.attestation}`);
-    addLog("Waiting receiveMessage...");
-    await targetService!.receiveMessage(
-      messageBytes,
-      attestationsResponse.attestation,
-    );
-    addLog("ReceiveMessage done");
+    setLoading(false);
   };
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Button fullWidth variant="contained" onClick={() => handleApprove()}>
+    <>
+      <Button
+        sx={{ mb: 4 }}
+        fullWidth
+        variant="contained"
+        disabled={
+          disabled ||
+          !walletAddress ||
+          ![ProcessState.Penging, ProcessState.Finish].includes(processState)
+        }
+        onClick={() => handleStart()}
+      >
         Start
       </Button>
-      <Box sx={{ wordBreak: "break-all" }}>
-        {stateLogs.map((log, index) => (
-          <div key={index}>{log}</div>
-        ))}
-      </Box>
-    </Paper>
+      <Stepper sx={{ mb: 4 }} activeStep={currentStep} alternativeLabel>
+        {ProcessSteps.map((step, index) => {
+          const matchStep = index === currentStep;
+          const hasError = matchStep && error;
+          return (
+            <Step key={step.value}>
+              <StepLabel
+                error={hasError}
+                icon={
+                  loading && matchStep ? (
+                    <CircularProgress size={24} />
+                  ) : undefined
+                }
+                optional={
+                  hasError ? (
+                    <Typography variant="caption" color="error">
+                      Click to retry
+                    </Typography>
+                  ) : undefined
+                }
+                onClick={handleRetry}
+              >
+                {step.label}
+              </StepLabel>
+            </Step>
+          );
+        })}
+      </Stepper>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Box sx={{ wordBreak: "break-all", maxHeight: 300, overflowY: "auto" }}>
+          {stateLogs.map((log, index) => (
+            <Box key={index} sx={{ mb: 2 }}>
+              {log}
+            </Box>
+          ))}
+        </Box>
+      </Paper>
+    </>
   );
 };
 export default TransferProcess;

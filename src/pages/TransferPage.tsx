@@ -3,22 +3,74 @@ import {
   Card,
   CardContent,
   Container,
-  Select,
   TextField,
+  Typography,
 } from "@mui/material";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import ChainSelect from "../components/ChainSelect";
 import { AvaliableChain } from "../types";
 import Grid from "@mui/material/Unstable_Grid2/Grid2";
 import TransferProcess from "../components/TransferProcess";
-import { linkWallet } from "../api/viem";
+import { connectWallet, getFirstAddress } from "../api/viem";
+import { Address } from "viem";
+import { getUSDCService } from "../servieMap";
+import { useBalance } from "../hooks/useBalance";
 
 interface Props {}
 const TransferPage: React.FC<Props> = (props) => {
+  const [walletAddress, setWalletAddress] = useState<Address>();
+  const [connectWalletLoading, setConnectWalletLoading] = useState(false);
   const [sourceChain, setSourceChain] = useState<AvaliableChain>();
   const [targetChain, setTargetChain] = useState<AvaliableChain>();
-  const [unit, setUnit] = useState<string>("");
+  const [transferAmount, setTransferAmount] = useState<string>("");
+  const [isTransferAmountTouch, setIsTransferAmountTouch] = useState(false);
 
+  const sourceService = useMemo(
+    () => getUSDCService(sourceChain),
+    [sourceChain],
+  );
+  const targetService = useMemo(
+    () => getUSDCService(targetChain),
+    [targetChain],
+  );
+  const { balance: sourceBalance, refresh: refreshSourceBalance } = useBalance({
+    address: walletAddress,
+    service: sourceService,
+  });
+  const { balance: targetBalance, refresh: refreshTargetBalance } = useBalance({
+    address: walletAddress,
+    service: targetService,
+  });
+  const refreshBalance = () => {
+    refreshSourceBalance();
+    refreshTargetBalance();
+  };
+  const amountError = useMemo(() => {
+    if (!transferAmount) {
+      return "Amount can't be empty.";
+    }
+    const amount = Number(transferAmount);
+    const sourceBalanceNumber = sourceBalance ? Number(sourceBalance) : 0;
+    if (amount > sourceBalanceNumber) {
+      return `Max amount is ${sourceBalanceNumber}.`;
+    }
+  }, [sourceBalance, transferAmount]);
+
+  useEffect(() => {
+    (async () => {
+      setWalletAddress(await getFirstAddress());
+    })();
+  }, []);
+  const handleConnectWallet = async () => {
+    setConnectWalletLoading(true);
+    try {
+      const address = await connectWallet();
+      setWalletAddress(address);
+    } catch (error) {
+      // pass
+    }
+    setConnectWalletLoading(false);
+  };
   return (
     <Container maxWidth="xs">
       <Card>
@@ -28,49 +80,63 @@ const TransferPage: React.FC<Props> = (props) => {
               <Button
                 fullWidth
                 variant="contained"
-                onClick={() => linkWallet()}
+                disabled={connectWalletLoading}
+                onClick={() => handleConnectWallet()}
               >
                 Connect Wallet
               </Button>
             </Grid>
             <Grid xs={12}>
+              <Typography overflow="hidden" textOverflow="ellipsis">
+                {walletAddress}
+              </Typography>
+            </Grid>
+            <Grid xs={12}>
               <ChainSelect
-                label="source"
-                placeholder="source"
+                label="Source"
+                placeholder="Source"
                 fullWidth
                 value={sourceChain}
                 onChange={setSourceChain}
+                helperText={sourceBalance}
               />
             </Grid>
             <Grid xs={12}>
               <ChainSelect
-                label="target"
-                placeholder="target"
+                label="Target"
+                placeholder="Target"
                 fullWidth
                 value={targetChain}
                 onChange={setTargetChain}
+                helperText={targetBalance}
               />
             </Grid>
             <Grid xs={12}>
               <TextField
-                label="Units"
-                placeholder="units"
+                label="Amount"
+                placeholder="Amount"
                 fullWidth
-                value={unit}
+                value={transferAmount}
                 onChange={(e) => {
-                  if (e.target.value.match(/[^0-9]/)) {
+                  setIsTransferAmountTouch(true);
+                  if (Number.isNaN(Number(e.target.value))) {
                     e.preventDefault();
                     return;
                   }
-                  setUnit(e.target.value);
+                  setTransferAmount(e.target.value);
                 }}
+                error={isTransferAmountTouch && !!amountError}
+                helperText={isTransferAmountTouch && amountError}
               />
             </Grid>
             <Grid xs={12}>
               <TransferProcess
-                source={sourceChain}
-                target={targetChain}
-                unit={unit}
+                disabled={!!amountError}
+                walletAddress={walletAddress}
+                sourceService={sourceService}
+                targetService={targetService}
+                transferAmount={transferAmount}
+                onFinish={refreshBalance}
               />
             </Grid>
           </Grid>
