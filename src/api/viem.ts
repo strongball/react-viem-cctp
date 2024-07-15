@@ -9,9 +9,13 @@ export async function connectWallet() {
 }
 
 export async function getFirstAddress(): Promise<Address | undefined> {
-  const walletClient = createWalletClient({
-    transport: custom(window.ethereum!),
-  });
-  const address = (await walletClient.getAddresses())?.[0];
-  return address;
+  try {
+    const walletClient = createWalletClient({
+      transport: custom(window.ethereum!),
+    });
+    const address = (await walletClient.getAddresses())?.[0];
+    return address;
+  } catch (error) {
+    return;
+  }
 }

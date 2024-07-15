@@ -1,4 +1,5 @@
 import {
+  AbiEvent,
   Address,
   Chain,
   createPublicClient,
@@ -10,6 +11,7 @@ import {
   formatUnits,
   getContract,
   GetContractReturnType,
+  GetFilterLogsReturnType,
   http,
   HttpTransport,
   keccak256,
@@ -29,6 +31,10 @@ interface USDCServiceConstructor {
   tokenMessengerAddress: Address;
   messageTransmitterAddress: Address;
 }
+interface GetLogOptions {
+  lastBlock?: bigint;
+}
+
 export class USDCService {
   domain: number;
   client: PublicClient<
@@ -108,6 +114,68 @@ export class USDCService {
     });
   }
 
+  async getLogs(address: Address, { lastBlock }: GetLogOptions = {}) {
+    // const results: GetFilterLogsReturnType<
+    //   typeof usdcAbi,
+    //   "Transfer",
+    //   undefined,
+    //   undefined,
+    //   undefined
+    // > = [];
+    const toBlock = lastBlock ?? (await this.client.getBlockNumber());
+    let fromBlock: bigint = toBlock;
+    const g = this.getLogsGenerator(address, { lastBlock: toBlock });
+
+    const res = await Promise.all(
+      Array.from({ length: 10 }).map(() => g.next()),
+    );
+    const results = res
+      .map((res) => {
+        if (res.done) {
+          return [];
+        }
+        fromBlock = res.value.fromBlock;
+        return res.value.logs;
+      })
+      .flat();
+    return { fromBlock: fromBlock, logs: results };
+  }
+  async *getLogsGenerator(address: Address, { lastBlock }: GetLogOptions = {}) {
+    let toBlock = lastBlock ?? (await this.client.getBlockNumber());
+    const blockSize = 2048n;
+    const event = {
+      type: "event",
+      name: "Transfer",
+      inputs: [
+        { type: "address", indexed: true, name: "from" },
+        { type: "address", indexed: true, name: "to" },
+        { type: "uint256", indexed: false, name: "value" },
+      ],
+    } as const;
+    while (true) {
+      const fromBlock = toBlock - blockSize + 1n;
+      const [logsFrom, logsTo] = await Promise.all([
+        this.client.getLogs({
+          address: this.usdcContract.address,
+          event: event,
+          args: { from: address },
+          fromBlock: fromBlock,
+          toBlock: toBlock,
+        }),
+        this.client.getLogs({
+          address: this.usdcContract.address,
+          event: event,
+          args: { to: address },
+          fromBlock: fromBlock,
+          toBlock: toBlock,
+        }),
+      ]);
+      const totalLogs = [...logsFrom, ...logsTo];
+      totalLogs.sort((a, b) => Number(a.blockNumber - b.blockNumber));
+      toBlock = fromBlock;
+      yield { fromBlock, logs: totalLogs };
+    }
+  }
   async switchChain() {
     return this.walletClient.addChain({ chain: this.walletClient.chain });
   }

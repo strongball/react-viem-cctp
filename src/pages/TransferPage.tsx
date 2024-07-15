@@ -2,6 +2,7 @@ import {
   Button,
   Card,
   CardContent,
+  CardHeader,
   Container,
   TextField,
   Typography,
@@ -15,6 +16,7 @@ import { connectWallet, getFirstAddress } from "../api/viem";
 import { Address } from "viem";
 import { getUSDCService } from "../servieMap";
 import { useBalance } from "../hooks/useBalance";
+import HistoryDialog from "../components/HistoryDialog";
 
 interface Props {}
 const TransferPage: React.FC<Props> = () => {
@@ -22,8 +24,11 @@ const TransferPage: React.FC<Props> = () => {
   const [connectWalletLoading, setConnectWalletLoading] = useState(false);
   const [sourceChain, setSourceChain] = useState<AvaliableChain>();
   const [targetChain, setTargetChain] = useState<AvaliableChain>();
+  const [openHistoryChain, setOpenHistoryChain] = useState<AvaliableChain>();
   const [transferAmount, setTransferAmount] = useState<string>("");
   const [isTransferAmountTouch, setIsTransferAmountTouch] = useState(false);
+
+  const isSameChain = sourceChain === targetChain;
 
   const sourceService = useMemo(
     () => getUSDCService(sourceChain),
@@ -71,9 +76,17 @@ const TransferPage: React.FC<Props> = () => {
     }
     setConnectWalletLoading(false);
   };
+
   return (
     <Container maxWidth="xs">
       <Card>
+        <CardHeader title="Transfer" />
+        <HistoryDialog
+          address={walletAddress}
+          open={!!openHistoryChain}
+          onClose={() => setOpenHistoryChain(undefined)}
+          service={getUSDCService(openHistoryChain)}
+        />
         <CardContent>
           <Grid container spacing={4}>
             <Grid xs={12}>
@@ -100,6 +113,11 @@ const TransferPage: React.FC<Props> = () => {
                 onChange={setSourceChain}
                 helperText={sourceBalance}
               />
+              {sourceChain && (
+                <Button onClick={() => setOpenHistoryChain(sourceChain)}>
+                  Show history
+                </Button>
+              )}
             </Grid>
             <Grid xs={12}>
               <ChainSelect
@@ -110,6 +128,11 @@ const TransferPage: React.FC<Props> = () => {
                 onChange={setTargetChain}
                 helperText={targetBalance}
               />
+              {targetChain && (
+                <Button onClick={() => setOpenHistoryChain(targetChain)}>
+                  Show history
+                </Button>
+              )}
             </Grid>
             <Grid xs={12}>
               <TextField
@@ -131,7 +154,7 @@ const TransferPage: React.FC<Props> = () => {
             </Grid>
             <Grid xs={12}>
               <TransferProcess
-                disabled={!!amountError}
+                disabled={isSameChain || !!amountError}
                 walletAddress={walletAddress}
                 sourceService={sourceService}
                 targetService={targetService}
